@@ -1,0 +1,15 @@
+{
+    "id": "org.imdbtop250opo",
+    "version": "0.1.0",
+    "name": "IMDb Top 250OPO",
+    "description": "Add-on to browse the IMDb Top 250 movies.",
+    "resources": ["catalog"],
+    "types": ["movie"],
+    "catalogs": [
+        {
+            "id": "imdbtop250opo",
+            "name": "IMDb Top 250OPO",
+            "type": "movie"
+        }
+    ]
+}

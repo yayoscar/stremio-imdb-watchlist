@@ -1,0 +1,24 @@
+{
+  "name": "stremio-imdb-watchlist",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.8",
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.1",
+    "fs": "^0.0.1-security",
+    "moviedb": "^0.2.12",
+    "needle": "^3.3.1",
+    "stremio-addon-sdk": "^1.6.10",
+    "tmdbv3": "^0.1.2"
+  }
+}
