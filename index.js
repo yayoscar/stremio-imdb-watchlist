@@ -78,25 +78,25 @@ builder.defineCatalogHandler(async (args) => {
                 const omdbResponse = await axios.get(omdbUrl);
                 const omdbData = omdbResponse.data;
                 if (omdbData.Type === 'movie') {
-                    let translatedPlot = omdbData.Plot; // Por defecto, el plot original
+                    // let translatedPlot = omdbData.Plot; // Por defecto, el plot original
                     try {
-                        const translateUrl = `https://api-free.deepl.com/v2/translate`;
-                        const translationResponse = await axios.post(
-                            translateUrl,
-                            {
-                                text: [omdbData.Plot],
-                                target_lang: 'ES', // Cambiar a otro idioma si es necesario
-                            },
-                            {
-                                headers: {
-                                    'Authorization': `DeepL-Auth-Key b3c83d75-5f14-478f-ad27-e9a27606acdd:fx`, // Reemplazar con tu API Key
-                                },
-                            }
-                        );
-                        translatedPlot = translationResponse.data.translations[0].text;
+                        // const translateUrl = `https://api-free.deepl.com/v2/translate`;
+                        // const translationResponse = await axios.post(
+                        //     translateUrl,
+                        //     {
+                        //         text: [omdbData.Plot],
+                        //         target_lang: 'ES', // Cambiar a otro idioma si es necesario
+                        //     },
+                        //     {
+                        //         headers: {
+                        //             'Authorization': `DeepL-Auth-Key b3c83d75-5f14-478f-ad27-e9a27606acdd:fx`, // Reemplazar con tu API Key
+                        //         },
+                        //     }
+                        // );
+                        // translatedPlot = translationResponse.data.translations[0].text;
 
                         const tmdbResponse = await axios.get(
-                            `https://api.themoviedb.org/3/find/${imdbId}?external_source=imdb_id`,
+                            `https://api.themoviedb.org/3/find/${imdbId}?external_source=imdb_id&language=es'`,
                             {
                                 headers: {
                                     'Authorization': `Bearer eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiI4ZjVjZWI5MGY0NzQxYzZhYmEzZDMyNmQ0MzNhZmY0YiIsIm5iZiI6MTczMzUwMTA3Ny4xNTkwMDAyLCJzdWIiOiI2NzUzMjA5NDQ2MjQzOTdmYTgxMTg5ZWMiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.8t0pWEgrRmDGSDY7UMErMBsDPxcRgeQUycWgJ0RTrqQ`, // Reemplazar con tu API Key
@@ -111,12 +111,12 @@ builder.defineCatalogHandler(async (args) => {
                         id: imdbId,
                         name: omdbData.Title,
                         type: omdbData.Type,
-                        year: omdbData.Year,
+                        year: tmdbMovie.release_date.split('-')[0],
                         poster: omdbData.Poster,
                         imdbRating: omdbData.imdbRating,
                         posterShape  :`${baseUrlTmdb}w1280${tmdbMovie.backdrop_path}`,
                         background  :`${baseUrlTmdb}w1280${tmdbMovie.backdrop_path}`,
-                        description: translatedPlot,
+                        description: tmdbMovie.overview,
                         genre: omdbData.Genre.split(',').map((genre) => genre.trim()),
                         runtime: omdbData.Runtime,
                         director: omdbData.Director.split(',').map((director) => director.trim()),
