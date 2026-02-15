@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "excalidraw": {
+      "type": "remote",
+      "url": "https://excalidraw-mcp-app.vercel.app/mcp",
+      "enabled": true
+    }
+  }
+}
