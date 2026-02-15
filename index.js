@@ -3,7 +3,6 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
 
 const envConfig = {
     maxItems: parseInt(process.env.MAX_ITEMS) || 8,
@@ -17,51 +16,97 @@ const envConfig = {
     nodeEnv: process.env.NODE_ENV || 'development'
 };
 
-if (!envConfig.omdbApiKey) {
-    console.error('ERROR: OMDB_API_KEY es requerido');
-    process.exit(1);
-}
-
-if (!envConfig.tmdbApiKey) {
-    console.error('ERROR: TMDB_API_KEY es requerido');
-    process.exit(1);
-}
-
 const app = express();
 app.use(cors());
-app.use(express.static(__dirname + '/static'));
 
-// Function to fetch IMDb watchlist
+const SERIES_TYPES = ['tvSeries', 'tvMiniSeries'];
+const MOVIE_TYPES = ['movie', 'short', 'tvMovie', 'tvSpecial', 'video', 'documentary'];
+
+function getStremioType(imdbType) {
+    if (SERIES_TYPES.includes(imdbType)) return 'series';
+    return 'movie';
+}
+
 async function getIMDbWatchlist(userId) {
-    const url = `https://m.imdb.com/user/${userId}/watchlist`;
-    try {
-        const response = await axios.get(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5'
+    const endpoints = [
+        `https://www.imdb.com/user/${userId}/watchlist?sort=date_added,asc`,
+        `https://m.imdb.com/user/${userId}/watchlist`
+    ];
+
+    const userAgents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0'
+    ];
+
+    for (const url of endpoints) {
+        try {
+            const response = await axios.get(url, {
+                headers: {
+                    'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Cache-Control': 'no-cache',
+                    'Referer': 'https://www.google.com/'
+                },
+                timeout: 15000
+            });
+            
+            if (response.status === 200 && response.data) {
+                const html = response.data;
+                const match = html.match(/__NEXT_DATA__[^>]*>([^<]+)<\/script>/);
+                
+                if (match) {
+                    try {
+                        const data = JSON.parse(match[1]);
+                        const edges = data?.props?.pageProps?.mainColumnData?.predefinedList?.titleListItemSearch?.edges;
+                        
+                        if (edges && edges.length > 0) {
+                            const items = edges.map(edge => {
+                                const item = edge.listItem;
+                                const imdbType = item.titleType?.id || 'movie';
+                                return {
+                                    imdbId: item.id,
+                                    title: item.titleText?.text || '',
+                                    year: item.releaseYear?.year || null,
+                                    poster: item.primaryImage?.url || null,
+                                    rating: item.ratingsSummary?.aggregateRating || null,
+                                    genres: item.titleGenres?.genres?.map(g => g.genre?.text).filter(Boolean) || [],
+                                    imdbType: imdbType,
+                                    stremioType: getStremioType(imdbType)
+                                };
+                            }).filter(i => i.imdbId && i.title);
+                            
+                            return { items, source: 'json' };
+                        }
+                    } catch (e) {
+                        console.error('JSON parse error:', e.message);
+                    }
+                }
+                
+                return { html, source: 'html' };
             }
-        });
-        if (response.status === 200) {
-            return response.data;
-        }
-    } catch (error) {
-        if (error.response?.status === 404) {
-            console.error(`Error 404: Usuario '${userId}' no encontrado`);
-        } else {
-            console.error('Error al obtener lista:', error.message);
+        } catch (error) {
+            console.error(`Error con ${url}:`, error.message);
         }
     }
     return null;
 }
 
-// Function to get TMDb ID
-async function getTMDbId(imdbId) {
-    const url = `https://api.themoviedb.org/3/find/${imdbId}?api_key=${envConfig.tmdbApiKey}&external_source=imdb_id&language=${envConfig.tmdbLanguage}`;
+async function getTMDbInfo(imdbId, stremioType) {
+    const url = `https://api.themoviedb.org/3/find/${imdbId}?external_source=imdb_id&language=${envConfig.tmdbLanguage}`;
     try {
-        const response = await axios.get(url);
+        const response = await axios.get(url, {
+            headers: {
+                'Authorization': `Bearer ${envConfig.tmdbApiKey}`,
+                'accept': 'application/json'
+            }
+        });
         if (response.status === 200 && response.data) {
-            return response.data.movie_results?.[0] || response.data.tv_results?.[0];
+            if (stremioType === 'series') {
+                return response.data.tv_results?.[0] || null;
+            }
+            return response.data.movie_results?.[0] || null;
         }
     } catch (error) {
         console.error('Error TMDB:', error.message);
@@ -69,131 +114,121 @@ async function getTMDbId(imdbId) {
     return null;
 }
 
-// Main catalog handler with Stremio extras parameter support
 async function handleCatalogRequest(req, res) {
     let userId = envConfig.defaultImdbUserId;
     const maxItems = parseInt(req.query.maxItems) || envConfig.maxItems;
+    const requestedType = req.params.type || 'movie';
 
-    console.log(`[Catalog] Request received:`, {
-        path: req.path,
-        query: req.query,
-        userId: userId
-    });
-
-    // Extract userId from URL parameter 'extra' (Stremio extras format)
-    // Stremio sends extras as: ?extra=userId:urXXXXXXX
     if (req.query.extra && req.query.extra.startsWith('userId:')) {
         userId = req.query.extra.split(':')[1];
-        console.log(`[Catalog] ✓ User ID from extra parameter: ${userId}`);
-    }
-    // Extract userId from URL path parameter (alternative format, for backwards compatibility)
-    else if (req.params.userId && req.params.userId !== 'manifest') {
+    } else if (req.params.userId && req.params.userId !== 'manifest') {
         userId = req.params.userId;
-        console.log(`[Catalog] ✓ User ID from path parameter: ${userId}`);
     }
 
-    // Validate userId format
     if (!userId.match(/^ur\d+$/i)) {
-        console.warn(`[Catalog] ✗ Invalid user ID format received: ${userId}`);
         return res.json({
             metas: [],
             error: `Invalid user ID format. Expected: urXXXXXXX. Received: ${userId}`
         });
     }
 
-    console.log(`[Catalog] ✓ Processing for user: ${userId}, items: ${maxItems}`);
-
     try {
-        const watchlistHtml = await getIMDbWatchlist(userId);
+        const watchlistData = await getIMDbWatchlist(userId);
 
-        if (!watchlistHtml) {
-            console.log(`[Catalog] ✗ No data retrieved for user: ${userId}`);
+        if (!watchlistData) {
             return res.json({ metas: [] });
         }
 
-        const $ = cheerio.load(watchlistHtml);
-        const movieItems = [];
-        const $items = $('li.ipc-metadata-list-summary-item');
+        let allItems = [];
+        
+        if (watchlistData.source === 'json' && watchlistData.items) {
+            allItems = watchlistData.items.filter(item => item.stremioType === requestedType);
+        } else if (watchlistData.source === 'html' && watchlistData.html) {
+            const $ = cheerio.load(watchlistData.html);
+            const $items = $('li.ipc-metadata-list-summary-item');
 
-        $items.each((index, element) => {
-            const titleRaw = $(element).find('.ipc-title__text').text().trim();
-            const title = titleRaw.replace(/^\d+\.\s*/, '');
-            const $link = $(element).find('a[href*="/title/tt"]').first();
-            const href = $link.attr('href') || '';
-            const imdbIdMatch = href.match(/title\/(tt\d+)/);
-            const imdbId = imdbIdMatch ? imdbIdMatch[1] : null;
-            const yearText = $(element).find('.dli-title-metadata-item').first().text().trim() || '';
-            const yearMatch = yearText.match(/(\d{4})/);
-            const year = yearMatch ? parseInt(yearMatch[1]) : null;
+            $items.each((index, element) => {
+                const titleRaw = $(element).find('.ipc-title__text').text().trim();
+                const title = titleRaw.replace(/^\d+\.\s*/, '');
+                const $link = $(element).find('a[href*="/title/tt"]').first();
+                const href = $link.attr('href') || '';
+                const imdbIdMatch = href.match(/title\/(tt\d+)/);
+                const imdbId = imdbIdMatch ? imdbIdMatch[1] : null;
+                const yearText = $(element).find('.dli-title-metadata-item').first().text().trim() || '';
+                const yearMatch = yearText.match(/(\d{4})/);
+                const year = yearMatch ? parseInt(yearMatch[1]) : null;
 
-            if (title && imdbId) {
-                movieItems.push({ title, imdbId, year });
-            }
-        });
+                if (title && imdbId) {
+                    allItems.push({ title, imdbId, year, stremioType: 'movie' });
+                }
+            });
+        }
 
-        console.log(`[Catalog] ✓ Extracted ${movieItems.length} items from watchlist`);
-
-        if (movieItems.length === 0) {
-            console.log(`[Catalog] ⚠ No items available to display`);
+        if (allItems.length === 0) {
             return res.json({ metas: [] });
         }
 
         const metas = [];
-        for (const item of movieItems) {
+        for (const item of allItems) {
             if (metas.length >= maxItems) break;
 
-            const tmdbInfo = await getTMDbId(item.imdbId);
+            const tmdbInfo = item.poster ? item : await getTMDbInfo(item.imdbId, item.stremioType);
 
             if (tmdbInfo) {
                 const poster = tmdbInfo.poster_path
                     ? `${envConfig.baseUrlTmdb}w500${tmdbInfo.poster_path}`
-                    : `https://stremio-v4-cache1.fcdn.io/images/poster_small.jpg`;
+                    : tmdbInfo.poster || `https://stremio-v4-cache1.fcdn.io/images/poster_small.jpg`;
                 const backdrop = tmdbInfo.backdrop_path
                     ? `${envConfig.baseUrlTmdb}w780${tmdbInfo.backdrop_path}`
                     : null;
 
-                const omdbResponse = await axios.get(`http://www.omdbapi.com/?i=${item.imdbId}&apikey=${envConfig.omdbApiKey}`);
-                const omdbData = omdbResponse.data;
+                let description = '';
+                try {
+                    const omdbResponse = await axios.get(`http://www.omdbapi.com/?i=${item.imdbId}&apikey=${envConfig.omdbApiKey}`);
+                    description = omdbResponse.data?.Plot || '';
+                } catch (e) {}
 
                 metas.push({
-                    id: `imdb:${item.imdbId}`,
-                    type: 'movie',
+                    id: item.imdbId,
+                    type: item.stremioType,
                     name: item.title,
                     year: item.year,
                     poster,
                     background: backdrop,
-                    genres: tmdbInfo.genre_names || [],
-                    description: omdbData?.Plot || '',
+                    genres: tmdbInfo.genres || [],
+                    description,
+                    imdbRating: item.rating || tmdbInfo.vote_average
                 });
-                console.log(`[Catalog] ✓ Added: ${item.title} (${item.imdbId})`);
             }
         }
 
-        console.log(`[Catalog] ✓ Returning ${metas.length} movies to Stremio`);
         res.json({ metas });
 
     } catch (error) {
-        console.error(`[Catalog] ✗ Error processing watchlist:`, error.message);
+        console.error(`Error processing watchlist:`, error.message);
         res.json({ metas: [] });
     }
 }
 
-// Manifest endpoint - Generic (without userId)
 app.get('/manifest.json', (req, res) => {
-    console.log('[Manifest] Serving generic manifest');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.json({
         id: 'org.stremio.imdbwatchlist',
-        version: '1.1.1',
+        version: '1.2.0',
         name: 'IMDb Watchlist',
         description: 'Add-on to browse IMDb user watchlist with enhanced metadata from TMDB',
         resources: ['catalog'],
-        types: ['movie'],
+        types: ['movie', 'series'],
         catalogs: [
             {
-                id: 'imdbwatchlist',
-                name: 'IMDb Watchlist',
+                id: 'imdbwatchlist_movies',
+                name: 'IMDb Watchlist - Movies',
                 type: 'movie'
+            },
+            {
+                id: 'imdbwatchlist_series',
+                name: 'IMDb Watchlist - Series',
+                type: 'series'
             }
         ],
         behaviorHints: {
@@ -210,38 +245,33 @@ app.get('/manifest.json', (req, res) => {
     });
 });
 
-// Manifest endpoint - With userId preloaded
 app.get('/:userId/manifest.json', (req, res) => {
     const userId = req.params.userId;
     
-    // Validate userId format
     if (!userId.match(/^ur\d+$/i)) {
-        console.warn(`[Manifest] Invalid user ID format: ${userId}`);
         return res.status(400).json({ error: 'Invalid user ID format. Expected: urXXXXXXX' });
     }
     
-    console.log(`[Manifest] Serving manifest for user: ${userId}`);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.json({
         id: `org.stremio.imdbwatchlist.${userId}`,
-        version: '1.1.1',
+        version: '1.2.0',
         name: `IMDb Watchlist (${userId})`,
         description: `Tu lista de seguimiento de IMDb - Usuario: ${userId}`,
         resources: ['catalog'],
-        types: ['movie'],
+        types: ['movie', 'series'],
         catalogs: [
             {
-                id: 'imdbwatchlist',
-                name: `IMDb Watchlist - ${userId}`,
+                id: 'imdbwatchlist_movies',
+                name: `IMDb Movies - ${userId}`,
                 type: 'movie',
-                extra: [
-                    {
-                        name: 'userId',
-                        isRequired: false,
-                        options: [userId],
-                        optionsLimit: 1
-                    }
-                ]
+                extra: [{ name: 'userId', isRequired: false, options: [userId], optionsLimit: 1 }]
+            },
+            {
+                id: 'imdbwatchlist_series',
+                name: `IMDb Series - ${userId}`,
+                type: 'series',
+                extra: [{ name: 'userId', isRequired: false, options: [userId], optionsLimit: 1 }]
             }
         ],
         behaviorHints: {
@@ -250,34 +280,93 @@ app.get('/:userId/manifest.json', (req, res) => {
     });
 });
 
-// Catalog endpoint - STREMIO EXTRA FORMAT
-app.get('/catalog/movie/imdbwatchlist.json', handleCatalogRequest);
+app.get('/catalog/:type/:id.json', handleCatalogRequest);
+app.get('/:userId/catalog/:type/:id.json', handleCatalogRequest);
 
-// Configure page
 app.get('/configure', (req, res) => {
-    res.sendFile(__dirname + '/static/configure.html');
+    const host = req.get('host') || 'localhost:7000';
+    const protocol = req.protocol || 'https';
+    const baseUrl = `${protocol}://${host}`;
+    
+    const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IMDb Watchlist - Configure</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+        .container { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 40px; max-width: 500px; width: 100%; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+        .header { text-align: center; margin-bottom: 30px; }
+        .icon { font-size: 48px; margin-bottom: 15px; }
+        h1 { color: #ffffff; font-size: 28px; font-weight: 600; margin-bottom: 10px; }
+        p.subtitle { color: #a0a0a0; font-size: 14px; line-height: 1.6; }
+        .form-group { margin-bottom: 25px; }
+        label { display: block; color: #ffffff; font-size: 14px; font-weight: 500; margin-bottom: 8px; }
+        input[type="text"] { width: 100%; padding: 14px 16px; background: rgba(255, 255, 255, 0.1); border: 2px solid rgba(255, 255, 255, 0.2); border-radius: 10px; color: #ffffff; font-size: 16px; transition: all 0.3s ease; }
+        input[type="text"]:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3); }
+        input[type="text"]::placeholder { color: #666; }
+        .help-text { color: #a0a0a0; font-size: 12px; margin-top: 8px; }
+        .btn { width: 100%; padding: 16px; border: none; border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer; background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%); color: #ffffff; }
+        .btn:hover { transform: translateY(-2px); }
+        .info-box { background: rgba(99, 102, 241, 0.1); border-left: 4px solid #6366f1; padding: 15px; border-radius: 8px; margin-top: 20px; }
+        .info-box h3 { color: #6366f1; font-size: 14px; margin-bottom: 8px; }
+        .info-box ul { list-style: none; padding: 0; }
+        .info-box li { color: #d4d4d4; font-size: 13px; padding: 5px 0 5px 20px; position: relative; }
+        .info-box li::before { content: "→"; position: absolute; left: 0; color: #6366f1; }
+        .footer { text-align: center; margin-top: 30px; color: #666; font-size: 12px; }
+        .error { color: #ef4444; background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; padding: 10px; border-radius: 6px; font-size: 14px; margin-top: 10px; display: none; }
+        .error.show { display: block; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="icon">🎬</div>
+            <h1>IMDb Watchlist</h1>
+            <p class="subtitle">Configura tu usuario de IMDb para ver peliculas y series en Stremio</p>
+        </div>
+        <form id="configForm">
+            <div class="form-group">
+                <label for="imdbUserId">Usuario de IMDb</label>
+                <input type="text" id="imdbUserId" name="imdbUserId" placeholder="Ejemplo: ur27472448" required autocomplete="off">
+                <div class="help-text">Tu ID de usuario de IMDb (formato: urXXXXXXX)</div>
+            </div>
+            <div class="error" id="errorMessage"></div>
+            <div class="info-box">
+                <h3>💡 Instrucciones</h3>
+                <ul>
+                    <li>Ingresa tu ID de usuario de IMDb</li>
+                    <li>Haz clic en "Instalar Addon"</li>
+                    <li>Veras peliculas y series en catalogos separados</li>
+                </ul>
+            </div>
+            <button type="submit" class="btn" style="margin-top: 20px;">🚀 Instalar Addon</button>
+        </form>
+        <div class="footer">Powered by Stremio Addon SDK</div>
+    </div>
+    <script>
+        const form = document.getElementById('configForm');
+        const input = document.getElementById('imdbUserId');
+        const error = document.getElementById('errorMessage');
+        const baseUrl = '${baseUrl}';
+        
+        function validateUserId(userId) { return /^ur\\d+$/i.test(userId); }
+        function showError(msg) { error.textContent = '⚠️ ' + msg; error.classList.add('show'); setTimeout(() => error.classList.remove('show'), 5000); }
+        
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const userId = input.value.trim();
+            if (userId && !validateUserId(userId)) { showError('ID debe ser: urXXXXXXX'); return; }
+            const manifestUrl = userId ? baseUrl + '/' + userId + '/manifest.json' : baseUrl + '/manifest.json';
+            window.location.href = 'stremio://' + manifestUrl.replace('https://', '').replace('http://', '');
+        });
+    </script>
+</body>
+</html>`;
+    res.setHeader('Content-Type', 'text/html');
+    res.send(html);
 });
 
-// Start server
-const manifest = app.getBaseManifest ? app.getBaseManifest() : null;
-const version = manifest ? manifest.version : '1.1.0';
-
-console.log('='.repeat(60));
-console.log(`🎬 Stremio IMDb Watchlist Addon v${version}`);
-console.log('='.repeat(60));
-console.log(`📡 Server endpoint: ${envConfig.host}/manifest.json`);
-console.log(`⚙️ Configuration: ${envConfig.host}/configure`);
-console.log(`📦 Catalog: ${envConfig.host}/catalog/movie/imdbwatchlist/manifest.json`);
-console.log(`🌍 Environment: ${envConfig.nodeEnv}`);
-console.log('='.repeat(60));
-console.log('');
-console.log('📋 COMO USAR:');
-console.log(`1. Instala el addon desde: ${envConfig.host}/manifest.json`);
-console.log('2. Abre el menú Addons en Stremio');
-console.log('3. Haz clic en IMDb Watchlist');
-console.log('4. Haz clic en el icono de engranaje (configurar)');
-console.log('5. Ingresa tu ID de usuario de IMDb y guarda los cambios');
-console.log('='.repeat(60));
-console.log('');
-
-app.listen(envConfig.port);
+module.exports = app;
