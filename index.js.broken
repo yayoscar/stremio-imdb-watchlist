@@ -1,0 +1,220 @@
+require('dotenv').config();
+const { addonBuilder } = require('stremio-addon-sdk');
+const axios = require('axios');
+const cheerio = require('cheerio');
+const express = require('express');
+const path = require('path');
+const fs = require('fs');
+
+// Load configuration from environment variables
+const envConfig = {
+    maxItems: parseInt(process.env.MAX_ITEMS) || 8,
+    port: parseInt(process.env.PORT) || 7000,
+    omdbApiKey: process.env.OMDB_API_KEY,
+    tmdbApiKey: process.env.TMDB_API_KEY,
+    tmdbLanguage: process.env.TMDB_LANGUAGE || 'es',
+    baseUrlTmdb: "https://image.tmdb.org/t/p/",
+    defaultImdbUserId: process.env.IMDB_USER_ID || 'ur27472448'
+};
+
+// Validate required environment variables
+if (!envConfig.omdbApiKey) {
+    console.error('ERROR: OMDB_API_KEY is required.');
+    process.exit(1);
+}
+
+if (!envConfig.tmdbApiKey) {
+    console.error('ERROR: TMDB_API_KEY is required.');
+    process.exit(1);
+}
+
+// Load base manifest.json
+const manifestPath = __dirname + '/manifest.json';
+let baseManifest;
+
+try {
+    baseManifest = JSON.parse(fs.readFileSync(manifestPath));
+} catch (error) {
+    console.error('ERROR: Could not read manifest.json');
+    process.exit(1);
+}
+
+// Helper function to extract user ID from request path
+function extractUserIdFromPath(reqPath) {
+    const path = reqPath || '';
+    const parts = path.split('/').filter(p => p && p.length > 0);
+    if (parts.length >= 2) {
+        const potentialUserId = parts[0];
+        if (potentialUserId.match(/^ur\d+$/i)) {
+            return potentialUserId;
+        }
+    }
+    return envConfig.defaultImdbUserId;
+}
+
+// Custom catalog handler that uses user ID injected by Express middleware
+builder.defineCatalogHandler(async (args) => {
+    const startTime = Date.now();
+    const imdbUserId = args.userProfileId || envConfig.defaultImdbUserId;
+    
+    console.log(\`[Catalog] Fetching for user: \${imdbUserId}\`);
+    
+    try {
+        const IMDB_WATCHLIST_URL = \`https://m.imdb.com/user/\${imdbUserId}/watchlist\`;
+        const response = await axios.get(IMDB_WATCHLIST_URL, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Referer': 'https://www.google.com/'
+            }
+        });
+
+        const html = response.data;
+        const $ = cheerio.load(html);
+
+        const metas = [];
+        const elements = $('li.ipc-metadata-list-summary-item').toArray();
+
+        console.log(\`[Catalog] Found \${elements.length} items in watchlist\`);
+
+        for (const element of elements) {
+            if (metas.length >= envConfig.maxItems) break;
+
+            const linkElement = $(element).find('a.ipc-lockup-overlay');
+            const imdbId = linkElement.attr('href')?.match(/\/title\/(tt\d+)\//)?.[1];
+
+            if (!imdbId) {
+                console.warn('[Catalog] Could not extract IMDb ID');
+                continue;
+            }
+
+            try {
+                const omdbUrl = \`https://www.omdbapi.com/?i=\${imdbId}&apikey=\${envConfig.omdbApiKey}&plot=full\`;
+                const omdbResponse = await axios.get(omdbUrl);
+                const omdbData = omdbResponse.data;
+
+                if (omdbData.Type !== 'movie') {
+                    console.log(\`[Catalog] Skipping \${imdbId}\`);
+                    continue;
+                }
+
+                let tmdbMovie = null;
+                try {
+                    const tmdbResponse = await axios.get(
+                        \`https://api.themoviedb.org/3/find/\${imdbId}?external_source=imdb_id&language=\${envConfig.tmdbLanguage}\`,
+                        { headers: { 'Authorization': \`Bearer \${envConfig.tmdbApiKey}\` }}
+                    );
+                    tmdbMovie = tmdbResponse.data.movie_results?.[0];
+                } catch (tmdbError) {
+                    console.warn(\`[Catalog] Warning: Could not fetch TMDB data for \${imdbId}\`);
+                }
+
+                const meta = {
+                    id: imdbId,
+                    name: omdbData.Title,
+                    type: omdbData.Type,
+                    year: tmdbMovie?.release_date?.split('-')[0] || omdbData.Year,
+                    poster: omdbData.Poster !== 'N/A' ? omdbData.Poster : null,
+                    imdbRating: parseFloat(omdbData.imdbRating) || null,
+                    posterShape: tmdbMovie?.backdrop_path ? \`\${envConfig.baseUrlTmdb}w1280\${tmdbMovie.backdrop_path}\` : null,
+                    background: tmdbMovie?.backdrop_path ? \`\${envConfig.baseUrlTmdb}w1280\${tmdbMovie.backdrop_path}\` : null,
+                    description: tmdbMovie?.overview || omdbData.Plot,
+                    genre: omdbData.Genre.split(',').map(g => g.trim()),
+                    runtime: omdbData.Runtime,
+                    director: omdbData.Director.split(',').map(d => d.trim()),
+                    cast: omdbData.Actors.split(',').map(a => a.trim())
+                };
+
+                metas.push(meta);
+                console.log(\`[Catalog] Added movie: \${omdbData.Title} (\${imdbId})\`);
+
+            } catch (movieError) {
+                console.error(\`[Catalog] Error processing movie \${imdbId}\`, movieError.message);
+            }
+        }
+
+        const elapsed = Date.now() - startTime;
+        console.log(\`[Catalog] Successfully fetched \${metas.length} movies in \${elapsed}ms\`);
+
+        return { metas };
+    } catch (error) {
+        const elapsed = Date.now() - startTime;
+        console.error('[Catalog] ERROR fetching IMDb watchlist', error.message || error);
+        return { metas: [] };
+    }
+});
+
+// Get SDK's interface
+const addonInterface = builder.getInterface();
+
+// Express app setup
+const app = express();
+// Serve static files
+app.use(express.static(__dirname + '/static'));
+
+// Middleware to inject user ID into request
+app.use((req, res, next) => {
+    const userId = extractUserIdFromPath(req.path || '');
+    if (userId && userId !== envConfig.defaultImdbUserId) {
+        req.userProfileId = userId;
+        console.log(\`[Proxy] Setting user ID to: \${userId}\`);
+    } else {
+        req.userProfileId = envConfig.defaultImdbUserId;
+    }
+    next();
+});
+
+// Override manifest routes with middleware support
+app.use((req, res, next) => {
+    const userId = extractUserIdFromPath(req.path || '');
+    if (userId && userId !== envConfig.defaultImdbUserId) {
+        console.log(\`[Manifest] Serving manifest for user: \${userId}\`);
+        req.userProfileId = userId;
+    } else {
+        req.userProfileId = envConfig.defaultImdbUserId;
+    }
+    next();
+});
+
+// User-specific manifest routes
+app.get('/:userId/manifest.json', (req, res) => {
+    const userId = req.params.userId;
+    console.log(\`[Manifest] Serving manifest for user: \${userId}\`);
+    res.json({
+        ...baseManifest,
+        name: \`IMDb Watchlist (\${userId})\`,
+        description: \`Watchlist for IMDb user: \${userId}\`
+    });
+});
+
+app.get('/manifest.json', (req, res) => {
+    console.log('[Manifest] Serving default manifest');
+    res.json(baseManifest);
+});
+
+// Configure page
+app.get('/configure', (req, res) => {
+    res.sendFile(path.join(__dirname, 'static', 'configure.html'));
+});
+
+// Use addon interface with middleware
+app.use(addonInterface);
+
+// Start server
+const PORT = envConfig.port;
+
+console.log('='.repeat(60));
+console.log(\`🎬 Stremio IMDb Watchlist Addon\`);
+console.log('='.repeat(60));
+console.log(\`📍 Version: \${baseManifest.version}\`);
+console.log(\`👤 Default IMDb User ID: \${envConfig.defaultImdbUserId}\`);
+console.log(\`🎯 Max items: \${envConfig.maxItems}\`);
+console.log(\`⚡ Port: \${PORT}\`);
+console.log('🌐 TMDB Language: \${envConfig.tmdbLanguage}\`);
+console.log('='.repeat(60));
+console.log(\`Server running at: http://localhost:\${PORT}/manifest.json\`);
+console.log(\`Configuration page: http://localhost:\${PORT}/configure\`);
+console.log(\`User manifests: http://localhost:\${PORT}/:userId/manifest.json\`);
+console.log('='.repeat(60));
+
+app.listen(PORT);
