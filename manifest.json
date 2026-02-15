@@ -1,15 +1,26 @@
 {
-    "id": "org.imdbtop250opo",
-    "version": "0.1.0",
-    "name": "IMDb Top 250OPO",
-    "description": "Add-on to browse the IMDb Top 250 movies.",
+    "id": "org.stremio.imdbwatchlist",
+    "version": "1.1.1",
+    "name": "IMDb Watchlist",
+    "description": "Add-on to browse IMDb user watchlist with enhanced metadata from TMDB.",
     "resources": ["catalog"],
     "types": ["movie"],
     "catalogs": [
         {
-            "id": "imdbtop250opo",
-            "name": "IMDb Top 250OPO",
+            "id": "imdbwatchlist",
+            "name": "IMDb Watchlist",
             "type": "movie"
+        }
+    ],
+    "behaviorHints": {
+        "configurable": true
+    },
+    "extras": [
+        {
+            "name": "userId",
+            "isRequired": true,
+            "title": "IMDb User ID",
+            "description": "Your IMDb User ID (format: urXXXXXXX)"
         }
     ]
 }

@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IMDb Watchlist - Configure</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        h1 {
+            color: #ffffff;
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        p.subtitle {
+            color: #a0a0a0;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        label {
+            display: block;
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 14px 16px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            color: #ffffff;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.3);
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        input[type="text"]::placeholder {
+            color: #666;
+        }
+
+        .help-text {
+            color: #a0a0a0;
+            font-size: 12px;
+            margin-top: 8px;
+            line-height: 1.5;
+        }
+
+        .help-text a {
+            color: #6366f1;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .help-text a:hover {
+            text-decoration: underline;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+            color: #ffffff;
+            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(99, 102, 241, 0.6);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .info-box {
+            background: rgba(99, 102, 241, 0.1);
+            border-left: 4px solid #6366f1;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+
+        .info-box h3 {
+            color: #6366f1;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .info-box ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .info-box li {
+            color: #d4d4d4;
+            font-size: 13px;
+            padding: 5px 0;
+            padding-left: 20px;
+            position: relative;
+        }
+
+        .info-box li::before {
+            content: "→";
+            position: absolute;
+            left: 0;
+            color: #6366f1;
+        }
+
+        .example-link {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 8px 12px;
+            border-radius: 6px;
+            color: #a0a0a0;
+            font-size: 13px;
+            font-weight: 500;
+            word-break: break-all;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            color: #666;
+            font-size: 12px;
+        }
+
+        .footer a {
+            color: #888;
+            text-decoration: none;
+        }
+
+        .error {
+            color: #ef4444;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid #ef4444;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 14px;
+            margin-top: 10px;
+            display: none;
+        }
+
+        .error.show {
+            display: block;
+            animation: shake 0.5s ease-in-out;
+        }
+
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body {
+                background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 100%);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="icon">🎬</div>
+            <h1>IMDb Watchlist</h1>
+            <p class="subtitle">Configura tu identificador de usuario de IMDb para ver tu lista de seguimiento en Stremio</p>
+        </div>
+
+        <form id="configForm">
+            <div class="form-group">
+                <label for="imdbUserId">Usuario de IMDb</label>
+                <input 
+                    type="text" 
+                    id="imdbUserId" 
+                    name="imdbUserId"
+                    placeholder="Ejemplo: ur27472448"
+                    required
+                    autocomplete="off"
+                >
+                <div class="help-text">
+                    Tu ID de usuario de IMDb (formato: urXXXXXXX)<br>
+                    <a href="https://www.imdb.com/profile" target="_blank" rel="noopener">
+                        🔗 ¿Cómo encontrar tu ID de usuario?
+                    </a>
+                </div>
+            </div>
+
+            <div class="error" id="errorMessage"></div>
+
+            <div id="userInfoDisplay">
+                <div class="info-box">
+                    <h3>💡 Instrucciones de uso</h3>
+                    <ul>
+                        <li>Ingresa tu ID de usuario de IMDb arriba</li>
+                        <li>Haz clic en "Instalar Addon" para agregarlo a Stremio</li>
+                        <li>Después configura tu ID desde los ajustes del addon en Stremio</li>
+                    </ul>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary">
+                🚀 Instalar Addon
+            </button>
+        </form>
+
+        <div class="footer">
+            <a href="https://github.com/Stremio/stremio-addon-sdk" target="_blank" rel="noopener">
+                Powered by Stremio Addon SDK
+            </a>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('configForm');
+        const IMDbUserIdInput = document.getElementById('imdbUserId');
+        const errorElement = document.getElementById('errorMessage');
+
+        // Validate IMDb user ID format (starts with 'ur' followed by numbers)
+        function validateUserId(userId) {
+            return /^ur\d+$/i.test(userId);
+        }
+
+        // Validate and show error
+        function validateAndShowError(userId) {
+            if (!userId) {
+                showError('Por favor, ingresa tu ID de usuario de IMDb');
+                return false;
+            }
+
+            if (!validateUserId(userId)) {
+                showError('El ID de usuario debe tener el formato: urXXXXXXX (ej: ur27472448)');
+                return false;
+            }
+
+            return true;
+        }
+
+        // Show error message
+        function showError(message) {
+            errorElement.textContent = '⚠️ ' + message;
+            errorElement.classList.add('show');
+
+            // Remove show class after animation
+            setTimeout(() => {
+                errorElement.classList.remove('show');
+            }, 5000);
+        }
+
+        // Hide error message
+        function hideError() {
+            errorElement.classList.remove('show');
+        }
+
+        // Generate user info display
+        function generateUserInfo(userId) {
+            if (!userId) {
+                return 'Ingresa tu usuario de IMDb para ver los detalles';
+            }
+
+            const isValid = validateUserId(userId);
+            const userExample = 'https://m.imdb.com/user/ur27472448/watchlist';
+
+            if (!isValid) {
+                return `
+                    <div class="info-box" style="background: rgba(239, 68, 68, 0.1); border-color: #ef4444;">
+                        <p style="color: #fca5a5; margin: 0;">ID no válido ❌</p>
+                        <p style="color: #a0a0a0; font-size: 12px; margin-top: 5px;">
+                            Presiona <strong>Instalar Addon</strong> y luego en Stremio configura tu ID de usuario desde el botón de configuración del addon.
+                        </p>
+                        <p style="color: #a0a0a0; font-size: 12px; margin-top: 3px;">
+                            Tu ID se encontrará en la URL de tu perfil: ${userExample}
+                        </p>
+                    </div>
+                `;
+            } else {
+                const exampleListUrl = `https://m.imdb.com/user/${userId}/watchlist`;
+                return `
+                    <div class="info-box" style="background: rgba(34, 197, 94, 0.1); border-color: #22c55e;">
+                        <p style="color: #86efac; margin: 0;">ID válido ✓</p>
+                        <p style="color: #a0a0a0; font-size: 12px; margin-top: 5px;">
+                            Tu lista: <a href="${exampleListUrl}" target="_blank" style="color: #60a5fa;">${exampleListUrl}</a>
+                        </p>
+                    </div>
+                `;
+            }
+        }
+
+        // Update validation display
+        function validateInput() {
+            const userId = IMDbUserIdInput.value.trim();
+            document.getElementById('userInfoDisplay').innerHTML = generateUserInfo(userId);
+        }
+
+        // Event listeners
+        IMDbUserIdInput.addEventListener('input', function(e) {
+            hideError();
+            validateInput();
+        });
+
+        IMDbUserIdInput.addEventListener('blur', function(e) {
+            validateInput();
+        });
+
+        // Validate and install on submit
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const userId = IMDbUserIdInput.value.trim();
+            const infoContainer = document.getElementById('userInfoDisplay');
+
+            // Build Stremio URL based on whether userId is provided and valid
+            let stremioUrl, manifestUrl;
+            
+            if (userId && validateUserId(userId)) {
+                // User provided valid ID - use personalized URL
+                manifestUrl = `http://localhost:7000/${userId}/manifest.json`;
+                stremioUrl = `stremio://localhost:7000/${userId}/manifest.json`;
+                
+                infoContainer.innerHTML = `
+                    <div class="info-box" style="background: rgba(34, 197, 94, 0.1); border-color: #22c55e;">
+                        <h3 style="color: #22c55e;">✓ Abriendo Stremio con tu ID configurado...</h3>
+                        <p style="color: #d4d4d4; font-size: 14px; margin: 10px 0;">
+                            Tu addon está preconfigurado con el usuario: <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px; color: #22c55e;">${userId}</code>
+                        </p>
+                        <p style="color: #a0a0a0; font-size: 12px; margin-top: 8px;">
+                            Si Stremio no se abre automáticamente, copia esta URL manualmente:
+                        </p>
+                        <input type="text" value="${manifestUrl}" readonly
+                            onclick="this.select()"
+                            style="width: 100%; padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid #22c55e; color: #fff; font-size: 13px; margin-top: 5px; cursor: pointer;">
+                    </div>
+                `;
+            } else {
+                // No valid ID - use generic URL
+                manifestUrl = 'http://localhost:7000/manifest.json';
+                stremioUrl = 'stremio://localhost:7000/manifest.json';
+                
+                infoContainer.innerHTML = `
+                    <div class="info-box" style="background: rgba(99, 102, 241, 0.1); border-color: #6366f1;">
+                        <h3 style="color: #6366f1;">✓ Abriendo Stremio...</h3>
+                        <p style="color: #d4d4d4; font-size: 14px; margin: 10px 0;">
+                            Después de instalar, configura tu ID de usuario de IMDb en los ajustes del addon (formato: urXXXXXXX)
+                        </p>
+                        <p style="color: #a0a0a0; font-size: 12px; margin-top: 8px;">
+                            Si Stremio no se abre automáticamente, copia esta URL manualmente:
+                        </p>
+                        <input type="text" value="${manifestUrl}" readonly
+                            onclick="this.select()"
+                            style="width: 100%; padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.3); border: 1px solid #6366f1; color: #fff; font-size: 13px; margin-top: 5px; cursor: pointer;">
+                    </div>
+                `;
+            }
+
+            // Redirect to Stremio
+            window.location.href = stremioUrl;
+        });
+
+        // Initial call on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            validateInput();
+
+            // Check if userId is provided in URL query parameter
+            const urlParams = new URLSearchParams(window.location.search);
+            const preFilledUserId = urlParams.get('userId');
+            if (preFilledUserId) {
+                IMDbUserIdInput.value = preFilledUserId;
+                validateInput();
+            }
+        });
+    </script>
+</body>
+</html>
