@@ -1,6 +1,6 @@
 require('dotenv').config();
 const axios = require('axios');
-const cheerio = require('cheerio');
+
 const express = require('express');
 const cors = require('cors');
 
@@ -28,67 +28,65 @@ function getStremioType(imdbType) {
 }
 
 async function getIMDbWatchlist(userId) {
-    const endpoints = [
-        `https://www.imdb.com/user/${userId}/watchlist?sort=date_added,asc`,
-        `https://m.imdb.com/user/${userId}/watchlist`
-    ];
+    const GRAPHQL_URL = 'https://caching.graphql.imdb.com/';
+    const PAGE_SIZE = 250;
 
-    const userAgents = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0'
-    ];
-
-    for (const url of endpoints) {
-        try {
-            const response = await axios.get(url, {
-                headers: {
-                    'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Cache-Control': 'no-cache',
-                    'Referer': 'https://www.google.com/'
-                },
-                timeout: 15000
-            });
-            
-            if (response.status === 200 && response.data) {
-                const html = response.data;
-                const match = html.match(/__NEXT_DATA__[^>]*>([^<]+)<\/script>/);
-                
-                if (match) {
-                    try {
-                        const data = JSON.parse(match[1]);
-                        const edges = data?.props?.pageProps?.mainColumnData?.predefinedList?.titleListItemSearch?.edges;
-                        
-                        if (edges && edges.length > 0) {
-                            const items = edges.map(edge => {
-                                const item = edge.listItem;
-                                const imdbType = item.titleType?.id || 'movie';
-                                return {
-                                    imdbId: item.id,
-                                    title: item.titleText?.text || '',
-                                    year: item.releaseYear?.year || null,
-                                    poster: item.primaryImage?.url || null,
-                                    rating: item.ratingsSummary?.aggregateRating || null,
-                                    genres: item.titleGenres?.genres?.map(g => g.genre?.text).filter(Boolean) || [],
-                                    imdbType: imdbType,
-                                    stremioType: getStremioType(imdbType)
-                                };
-                            }).filter(i => i.imdbId && i.title);
-                            
-                            return { items, source: 'json' };
+    const query = `{
+        predefinedList(classType: WATCH_LIST, userId: "${userId}") {
+            items(first: ${PAGE_SIZE}) {
+                edges {
+                    node {
+                        item {
+                            ... on Title {
+                                id
+                                titleText { text }
+                                releaseYear { year }
+                                titleType { id }
+                                ratingsSummary { aggregateRating }
+                                primaryImage { url }
+                                titleGenres { genres { genre { text } } }
+                            }
                         }
-                    } catch (e) {
-                        console.error('JSON parse error:', e.message);
                     }
                 }
-                
-                return { html, source: 'html' };
             }
-        } catch (error) {
-            console.error(`Error con ${url}:`, error.message);
         }
+    }`;
+
+    try {
+        const response = await axios.post(GRAPHQL_URL, { query }, {
+            headers: {
+                'content-type': 'application/json',
+                'x-imdb-client-name': 'imdb-web-next'
+            },
+            timeout: 15000
+        });
+
+        if (response.status === 200 && response.data?.data) {
+            const edges = response.data.data.predefinedList?.items?.edges;
+
+            if (edges && edges.length > 0) {
+                const items = edges.map(edge => {
+                    const item = edge.node?.item;
+                    if (!item) return null;
+                    const imdbType = item.titleType?.id || 'movie';
+                    return {
+                        imdbId: item.id,
+                        title: item.titleText?.text || '',
+                        year: item.releaseYear?.year || null,
+                        poster: item.primaryImage?.url || null,
+                        rating: item.ratingsSummary?.aggregateRating || null,
+                        genres: item.titleGenres?.genres?.map(g => g.genre?.text).filter(Boolean) || [],
+                        imdbType: imdbType,
+                        stremioType: getStremioType(imdbType)
+                    };
+                }).filter(i => i && i.imdbId && i.title);
+
+                return { items, source: 'json' };
+            }
+        }
+    } catch (error) {
+        console.error(`Error fetching watchlist via GraphQL:`, error.message);
     }
     return null;
 }
@@ -140,28 +138,9 @@ async function handleCatalogRequest(req, res) {
         }
 
         let allItems = [];
-        
+
         if (watchlistData.source === 'json' && watchlistData.items) {
             allItems = watchlistData.items.filter(item => item.stremioType === requestedType);
-        } else if (watchlistData.source === 'html' && watchlistData.html) {
-            const $ = cheerio.load(watchlistData.html);
-            const $items = $('li.ipc-metadata-list-summary-item');
-
-            $items.each((index, element) => {
-                const titleRaw = $(element).find('.ipc-title__text').text().trim();
-                const title = titleRaw.replace(/^\d+\.\s*/, '');
-                const $link = $(element).find('a[href*="/title/tt"]').first();
-                const href = $link.attr('href') || '';
-                const imdbIdMatch = href.match(/title\/(tt\d+)/);
-                const imdbId = imdbIdMatch ? imdbIdMatch[1] : null;
-                const yearText = $(element).find('.dli-title-metadata-item').first().text().trim() || '';
-                const yearMatch = yearText.match(/(\d{4})/);
-                const year = yearMatch ? parseInt(yearMatch[1]) : null;
-
-                if (title && imdbId) {
-                    allItems.push({ title, imdbId, year, stremioType: 'movie' });
-                }
-            });
         }
 
         if (allItems.length === 0) {
