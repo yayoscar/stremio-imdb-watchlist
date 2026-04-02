@@ -27,6 +27,22 @@ function getStremioType(imdbType) {
     return 'movie';
 }
 
+async function getIMDbUserName(userId) {
+    try {
+        const query = `{ predefinedList(classType: WATCH_LIST, userId: "${userId}") { author { nickName } } }`;
+        const response = await axios.post('https://caching.graphql.imdb.com/', { query }, {
+            headers: {
+                'content-type': 'application/json',
+                'x-imdb-client-name': 'imdb-web-next'
+            },
+            timeout: 10000
+        });
+        return response.data?.data?.predefinedList?.author?.nickName || null;
+    } catch (error) {
+        return null;
+    }
+}
+
 async function getIMDbWatchlist(userId) {
     const GRAPHQL_URL = 'https://caching.graphql.imdb.com/';
     const PAGE_SIZE = 250;
@@ -227,31 +243,33 @@ app.get('/manifest.json', (req, res) => {
     });
 });
 
-app.get('/:userId/manifest.json', (req, res) => {
+app.get('/:userId/manifest.json', async (req, res) => {
     const userId = req.params.userId;
-    
+
     if (!userId.match(/^ur\d+$/i)) {
         return res.status(400).json({ error: 'Invalid user ID format. Expected: urXXXXXXX' });
     }
-    
+
+    const displayName = await getIMDbUserName(userId) || userId;
+
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.json({
         id: `org.stremio.imdbwatchlist.${userId}`,
         version: '1.2.0',
-        name: `IMDb Watchlist (${userId})`,
-        description: `Tu lista de seguimiento de IMDb - Usuario: ${userId}`,
+        name: `IMDb Watchlist (${displayName})`,
+        description: `Lista de seguimiento de IMDb - ${displayName}`,
         resources: ['catalog', 'meta'],
         types: ['movie', 'series'],
         catalogs: [
             {
                 id: 'imdbwatchlist_movies',
-                name: `IMDb Movies - ${userId}`,
+                name: `IMDb Movies - ${displayName}`,
                 type: 'movie',
                 extra: [{ name: 'userId', isRequired: false, options: [userId], optionsLimit: 1 }]
             },
             {
                 id: 'imdbwatchlist_series',
-                name: `IMDb Series - ${userId}`,
+                name: `IMDb Series - ${displayName}`,
                 type: 'series',
                 extra: [{ name: 'userId', isRequired: false, options: [userId], optionsLimit: 1 }]
             }
