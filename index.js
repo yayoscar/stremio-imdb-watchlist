@@ -45,6 +45,7 @@ async function getIMDbWatchlist(userId) {
                                 ratingsSummary { aggregateRating }
                                 primaryImage { url }
                                 titleGenres { genres { genre { text } } }
+                                runtime { seconds displayableProperty { value { plainText } } }
                             }
                         }
                     }
@@ -77,6 +78,7 @@ async function getIMDbWatchlist(userId) {
                         poster: item.primaryImage?.url || null,
                         rating: item.ratingsSummary?.aggregateRating || null,
                         genres: item.titleGenres?.genres?.map(g => g.genre?.text).filter(Boolean) || [],
+                        runtime: item.runtime?.displayableProperty?.value?.plainText || null,
                         imdbType: imdbType,
                         stremioType: getStremioType(imdbType)
                     };
@@ -171,7 +173,8 @@ async function handleCatalogRequest(req, res) {
                     id: item.imdbId,
                     type: item.stremioType,
                     name: item.title,
-                    year: item.year,
+                    releaseInfo: item.year ? String(item.year) : undefined,
+                    runtime: item.runtime || undefined,
                     poster,
                     background: backdrop,
                     genres: tmdbInfo.genres || [],
@@ -196,7 +199,7 @@ app.get('/manifest.json', (req, res) => {
         version: '1.2.0',
         name: 'IMDb Watchlist',
         description: 'Add-on to browse IMDb user watchlist with enhanced metadata from TMDB',
-        resources: ['catalog'],
+        resources: ['catalog', 'meta'],
         types: ['movie', 'series'],
         catalogs: [
             {
@@ -237,7 +240,7 @@ app.get('/:userId/manifest.json', (req, res) => {
         version: '1.2.0',
         name: `IMDb Watchlist (${userId})`,
         description: `Tu lista de seguimiento de IMDb - Usuario: ${userId}`,
-        resources: ['catalog'],
+        resources: ['catalog', 'meta'],
         types: ['movie', 'series'],
         catalogs: [
             {
@@ -259,8 +262,100 @@ app.get('/:userId/manifest.json', (req, res) => {
     });
 });
 
+async function handleMetaRequest(req, res) {
+    const type = req.params.type;
+    const imdbId = req.params.id?.replace('.json', '');
+
+    if (!imdbId || !imdbId.startsWith('tt')) {
+        return res.json({ meta: null });
+    }
+
+    try {
+        const query = `{
+            title(id: "${imdbId}") {
+                id
+                titleText { text }
+                originalTitleText { text }
+                releaseYear { year endYear }
+                titleType { id }
+                ratingsSummary { aggregateRating }
+                primaryImage { url }
+                titleGenres { genres { genre { text } } }
+                runtime { seconds displayableProperty { value { plainText } } }
+                plot { plotText { plainText } }
+            }
+        }`;
+
+        const graphqlResponse = await axios.post('https://caching.graphql.imdb.com/', { query }, {
+            headers: {
+                'content-type': 'application/json',
+                'x-imdb-client-name': 'imdb-web-next'
+            },
+            timeout: 15000
+        });
+
+        const title = graphqlResponse.data?.data?.title;
+        if (!title) {
+            return res.json({ meta: null });
+        }
+
+        const imdbType = title.titleType?.id || 'movie';
+        const stremioType = getStremioType(imdbType);
+        const year = title.releaseYear?.year;
+        const endYear = title.releaseYear?.endYear;
+        const isSeries = SERIES_TYPES.includes(imdbType);
+
+        let releaseInfo;
+        if (isSeries && year) {
+            releaseInfo = endYear ? `${year}-${endYear}` : `${year}-`;
+        } else if (year) {
+            releaseInfo = String(year);
+        }
+
+        const tmdbInfo = await getTMDbInfo(imdbId, stremioType);
+
+        const poster = tmdbInfo?.poster_path
+            ? `${envConfig.baseUrlTmdb}w500${tmdbInfo.poster_path}`
+            : title.primaryImage?.url || null;
+        const background = tmdbInfo?.backdrop_path
+            ? `${envConfig.baseUrlTmdb}w780${tmdbInfo.backdrop_path}`
+            : null;
+
+        let description = title.plot?.plotText?.plainText || '';
+        if (!description && envConfig.omdbApiKey) {
+            try {
+                const omdbResponse = await axios.get(`http://www.omdbapi.com/?i=${imdbId}&apikey=${envConfig.omdbApiKey}`);
+                description = omdbResponse.data?.Plot || '';
+            } catch (e) {}
+        }
+
+        const meta = {
+            id: imdbId,
+            type: stremioType,
+            name: title.titleText?.text || '',
+            releaseInfo,
+            runtime: title.runtime?.displayableProperty?.value?.plainText || undefined,
+            poster,
+            background,
+            logo: undefined,
+            genres: title.titleGenres?.genres?.map(g => g.genre?.text).filter(Boolean) || [],
+            description,
+            imdbRating: title.ratingsSummary?.aggregateRating ? String(title.ratingsSummary.aggregateRating) : undefined
+        };
+
+        res.json({ meta });
+
+    } catch (error) {
+        console.error(`Error fetching meta for ${imdbId}:`, error.message);
+        res.json({ meta: null });
+    }
+}
+
 app.get('/catalog/:type/:id.json', handleCatalogRequest);
 app.get('/:userId/catalog/:type/:id.json', handleCatalogRequest);
+
+app.get('/meta/:type/:id.json', handleMetaRequest);
+app.get('/:userId/meta/:type/:id.json', handleMetaRequest);
 
 app.get('/configure', (req, res) => {
     const host = req.get('host') || 'localhost:7000';
